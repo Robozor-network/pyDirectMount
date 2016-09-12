@@ -1,6 +1,7 @@
 import sys
 import sys
 import time
+import datetime
 import math
 from pymlab import config
 from support import axis
@@ -15,7 +16,12 @@ from astropy.coordinates import Angle, Latitude, Longitude  # Angles
 from astropy.coordinates import EarthLocation
 
 from astropy.utils import iers
-#iers.IERS.iers_table = iers.IERS_A.open(iers.IERS_A_URL)
+print "IERS sould be updated from", iers.IERS_A_URL
+iers.IERS.iers_table = iers.IERS_A.open("/home/roman/finals2000A.all")
+
+#from astroplan import download_IERS_A
+#download_IERS_A()
+
 
 
 class drive(object):
@@ -51,6 +57,8 @@ class drive(object):
                                                   # 2250429 pri 1/16 microstep tzn. - cely registr je cca 1.9 otacky (mereno na RA)
             self.mount_direction = (False, False) # smer otaceni os
 
+        self.mount_stepsperdeg = (self.mount_steps[0]/360.0, self.mount_steps[1]/360.0)
+
     def beep(self, duration = 500):
         self.spi.GPIO_write(0b11111111)
         time.sleep(duration/1000)
@@ -80,38 +88,83 @@ class drive(object):
             
             elif self.mount_slew:
                 print ""
+                print ""
+                print ""
                 print "slew mode"
                 print "============"
-                print "puvodni souradnice:", self.mount_position
                 print "pozadovane souradnice:", self.mount_target
 
-                position = self.mount_position
                 target = self.mount_target
                 self.mount_target = False
 
-                ra = target.ra.degree - position.ra.degree
-                dec = target.dec.degree - position.dec.degree
-                
-                ra = (ra + 180) % 360 - 180
-                dec = (dec + 180) % 360 - 180
+                now = datetime.datetime.utcnow()
+                midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                HAvariable = ((now - midnight).seconds/(24*60*60.0))/360.0 - 14.467532 #obs longtitude
+                print "sidereal time", now - midnight, HAvariable
 
-                print "korekce:", ra, dec
+
+                t = Time(datetime.datetime.utcnow(), scale='utc',
+                         location=self.observatory) 
+
+                print t
+
+                #HAvariable = t.sidereal_time('mean')
+                print Time.now()
+                t2 = Time(str(Time.now()), scale='utc', location=self.observatory)
+                ##print t2.sidereal_time('apparent')
+                HAvariable = t2.sidereal_time('mean').degree
+                print t2.sidereal_time('mean'), "-->", HAvariable
+
+
+                ha = HAvariable - target.ra.degree
+                dec = target.dec.degree
+
+
+
+                print "1, ha/dec:", ha, dec, "z ra", target.ra.degree
+                
+                ha = -(((ha + 180) % 360 - 180)+90)
+                dec = -(((dec + 180) % 360 - 180))
+
+                print "2, ha/dec:",ha, dec
+
+
+
+                if -180 <= ha <= -90:
+                    print "mode: -180 - -90"
+                    ha = ha+180
+                    dec = dec-180
+
+                elif -90  <= ha <=   0:   # OK
+                    print "mode: -90 - 0" ####
+                    ha = ha
+                    dec = dec
+
+                elif 0 <= ha <=  90:    # OK
+                    print "mode: 0 - 90"
+                    ha = ha
+                    dec = dec
+
+                elif 90 <= ha <= 180:
+                    print "mode: 90 - 180"
+                    ha = ha
+                    dec = dec
+
+                else:
+                    print "CHYBA --- out of range", ha, dec
+
+                print "3, ha/dec:", ha, dec
+
+                ha = ha + 0
+                dec = dec + 0
+
 
                 self.AxA.Float()
                 self.AxB.Float()
                 time.sleep(0.5)
 
-                pos_req = (ra*(self.mount_steps[0]/360.0), dec*(self.mount_steps[1]/360.0))
-
-                deltaB = pos_req[0]
-                deltaA = pos_req[1]
-
-                print "DELTA #1", deltaB, deltaA
-
-                self.AxB.Move(int(deltaA))
-                self.AxA.Move(int(deltaB))
-
-
+                self.AxA.GoTo(int(ha *self.mount_stepsperdeg[0]))
+                self.AxB.GoTo(int(dec*self.mount_stepsperdeg[1]))
 
                 while self.AxA.IsBusy() | self.AxB.IsBusy():
                     print "blaB", self.AxA.IsBusy(), self.AxB.IsBusy()
@@ -196,18 +249,18 @@ class drive(object):
 
         self.AxA = axis.axis(self.spi, self.spi.I2CSPI_SS1, 1, 1)    # set Number of Steps per axis Unit and set Direction of Rotation
         self.AxA.Reset()
-        self.AxA.MaxSpeed(0x30ffff)                      # set maximal motor speed 
+        self.AxA.MaxSpeed(0x32ffff)                      # set maximal motor speed 
 
 
         self.AxB = axis.axis(self.spi, self.spi.I2CSPI_SS0, 1, 1)    
         self.AxB.Reset()
-        self.AxB.MaxSpeed(0x30ffff)                      # set maximal motor speed
+        self.AxB.MaxSpeed(0x32ffff)                      # set maximal motor speed
 
 
-        self.AxB.MoveWait(2000)
-        self.AxA.MoveWait(2000)
-        self.AxB.MoveWait(-2000)
-        self.AxA.MoveWait(-2000)
+        #self.AxB.MoveWait(2000)
+        #self.AxA.MoveWait(2000)
+        #self.AxB.MoveWait(-2000)
+        #self.AxA.MoveWait(-2000)
 
         
 
@@ -249,13 +302,25 @@ def main():
         print "*************************"
         #driver.Slew(SkyCoord(alt = 1, az = 90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
 
-        driver.Slew(SkyCoord(alt = 5, az = 90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
+        #driver.Slew(SkyCoord(ra = 1.3, dec = 0, obstime = Time.now(), frame = 'icrs', unit="deg", location = driver.getObs()))
 
-        time.sleep(50)
+        driver.Slew(SkyCoord(alt = 45, az = 45+180+90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
 
-        driver.Slew(SkyCoord(alt = 10, az = 180+90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
+        #driver.Slew(SkyCoord(alt = 10, az = 180, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
 
-        time.sleep(5)
+        #driver.Slew(SkyCoord(alt = 10, az = 180, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
+
+        #driver.Slew(SkyCoord(alt = 10, az = 180, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
+
+        time.sleep(1)
+
+        #driver.Slew(SkyCoord(alt = 10, az = 180, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
+
+        #time.sleep(1)
+
+        #driver.Slew(SkyCoord(alt = 10, az = 180+90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
+
+        #time.sleep(5)
 
         driver.GoPark()
         #driver.Slew(SkyCoord(alt = 1, az = 90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)

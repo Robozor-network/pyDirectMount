@@ -23,10 +23,10 @@ class axis:
         self.spi.SPI_write_byte(self.CS, 0xFF) 
         self.spi.SPI_write_byte(self.CS, 0x00)      # ACC 
         self.spi.SPI_write_byte(self.CS, 0x00)
-        self.spi.SPI_write_byte(self.CS, 0x10) 
+        self.spi.SPI_write_byte(self.CS, 0x01) 
         self.spi.SPI_write_byte(self.CS, 0x00)      # DEC 
         self.spi.SPI_write_byte(self.CS, 0x00)
-        self.spi.SPI_write_byte(self.CS, 0x10) 
+        self.spi.SPI_write_byte(self.CS, 0x01) 
         self.spi.SPI_write_byte(self.CS, 0x0A)      # KVAL_RUN
         self.spi.SPI_write_byte(self.CS, 0xF0)
         self.spi.SPI_write_byte(self.CS, 0x0B)      # KVAL_ACC
@@ -46,6 +46,14 @@ class axis:
         self.spi.SPI_write_byte(self.CS, (speed >> 16) & 0xFF)  
         self.spi.SPI_write_byte(self.CS, (speed >> 8) & 0xFF)  
         self.spi.SPI_write_byte(self.CS, (speed) & 0xFF)  
+
+    def GoTo(self, abspos):
+        ' Setup of maximum speed '
+        self.spi.SPI_write_byte(self.CS, 0x60)       # Max Speed setup 
+        self.spi.SPI_write_byte(self.CS, (abspos >> 16) & 0xFF)  
+        self.spi.SPI_write_byte(self.CS, (abspos >> 8) & 0xFF)  
+        self.spi.SPI_write_byte(self.CS, (abspos) & 0xFF)
+        return abspos
 
     def ReleaseSW(self):
         ' Go away from Limit Switch '
