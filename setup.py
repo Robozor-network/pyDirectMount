@@ -13,7 +13,7 @@ os.chdir(path.realpath(path.dirname(__file__)))
 
 
 setup(
-    name             = 'pyDirectMount',
+    name             = 'pydirectmount',
     version          = '0.0.1',
     author           = 'Roman Dvorak',
     author_email     = 'roman-dvorak@email.cz',
@@ -21,8 +21,8 @@ setup(
     long_description = "",
     url              = 'https://github.com/Robozor-network/pyDirectMount',
     
-    #packages    = ['pymlab', 'pymlab.sensors', 'pymlab.tests', ],
-    packages    = find_packages("src"),
+    packages    = ['pydirectmount'],
+    #packages    = find_packages("src"),
     package_dir = {'': 'src'},
     provides    = ['pyDirectMount'],
     install_requires = [ 'hidapi' ],
