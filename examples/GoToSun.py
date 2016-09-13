@@ -4,6 +4,12 @@ from astropy.time import Time
 from astropy.coordinates import get_sun
 import time
 
+from astropy.utils import iers
+print "IERS sould be updated from", iers.IERS_A_URL
+iers.IERS.iers_table = iers.IERS_A.open("/home/odroid/finals2000A.all")
+#iers.IERS.iers_table = iers.IERS_A.open(iers.IERS_A_URL)
+
+
 def main():
     try:
         mount = drive(profile = 'HEQ5', mode = "eq", connectMethod = 'pymlab',
@@ -16,6 +22,9 @@ def main():
         time.sleep(60)
 
         mount.GoPark()
+        
+        while True:
+            pass
 
     except KeyboardInterrupt:
         mount.hardStop()

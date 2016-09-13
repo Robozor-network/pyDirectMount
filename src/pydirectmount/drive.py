@@ -7,6 +7,9 @@ from pymlab import config
 from support import axis
 from threading import Thread
 import numpy as np
+import rospy
+from arom.srv import *
+from arom.msg import *
 
 from astropy import units as u
 from astropy.time import Time
@@ -16,9 +19,9 @@ from astropy.coordinates import Angle, Latitude, Longitude  # Angles
 from astropy.coordinates import EarthLocation
 from astropy.coordinates import get_sun
 
-from astropy.utils import iers
-print "IERS sould be updated from", iers.IERS_A_URL
-iers.IERS.iers_table = iers.IERS_A.open("/home/roman/finals2000A.all")
+#from astropy.utils import iers
+#print "IERS sould be updated from", iers.IERS_A_URL
+#iers.IERS.iers_table = iers.IERS_A.open("/home/roman/finals2000A.all")
 
 #from astroplan import download_IERS_A
 #download_IERS_A()
@@ -206,8 +209,8 @@ class drive(object):
                 newA = 50
                 newB = 0
                 #if lastA != newA or lastB != newB:
-                self.AxA.Run(int(AxA_mountDir), 3)
-                self.AxB.Float()
+                self.AxB.Run(int(AxA_mountDir), 3)
+                self.AxA.Float()
                 #self.AxA.ReadStatusReg()
                 #self.AxB.ReadStatusReg()
                 lastA = 50
@@ -227,42 +230,28 @@ class drive(object):
         self.t1.start()
 
     def connect(self):
-        cfg = config.Config(
-            i2c = {
-                "port": self.port,
-                "device": 'serial',
-            },
-
-            bus = [
-                { 
-                "name":"spi", 
-                "type":"i2cspi"
-                },
-            ],
-        )
-
-        cfg.initialize()
-        self.spi = cfg.get_device("spi")
-
-        self.spi.route()
-        self.spi.SPI_config(self.spi.I2CSPI_MSB_FIRST| self.spi.I2CSPI_MODE_CLK_IDLE_HIGH_DATA_EDGE_TRAILING| self.spi.I2CSPI_CLK_461kHz)
+        
+        self.pymlab = rospy.ServiceProxy('pymlab_drive', PymlabDrive)
+        
+        print eval(self.pymlab(device="telescope_spi", method="route").value)
+        print eval(self.pymlab(device="telescope_spi", method="SPI_config", parameters="0b1001").value) # self.spi.I2CSPI_MSB_FIRST| self.spi.I2CSPI_MODE_CLK_IDLE_HIGH_DATA_EDGE_TRAILING| self.spi.I2CSPI_CLK_461kHz
 
         time.sleep(.25)
-
-        self.AxA = axis.axis(self.spi, self.spi.I2CSPI_SS1, 1, 1)    # set Number of Steps per axis Unit and set Direction of Rotation
+        print self.pymlab
+        self.AxA = axis.axis(self.pymlab, 0b0001, 1, 1, protocol = 'arom')    # set Number of Steps per axis Unit and set Direction of Rotation
         self.AxA.Reset()
         self.AxA.MaxSpeed(0x33ffff)                      # set maximal motor speed 
 
 
-        self.AxB = axis.axis(self.spi, self.spi.I2CSPI_SS0, 1, 1)    
+        self.AxB = axis.axis(self.pymlab, 0b0010, 1, 1, protocol = 'arom')    
         self.AxB.Reset()
         self.AxB.MaxSpeed(0x33ffff)                      # set maximal motor speed
 
 
-        #self.AxB.MoveWait(2000)
-        #self.AxA.MoveWait(2000)
-        #self.AxB.MoveWait(-2000)
-        #self.AxA.MoveWait(-2000)
+        self.AxB.MoveWait(2000)
+        self.AxA.MoveWait(2000)
+        self.AxB.MoveWait(-2000)
+        self.AxA.MoveWait(-2000)
 
         
 
