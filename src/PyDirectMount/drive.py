@@ -14,6 +14,7 @@ from astropy.coordinates import SkyCoord  # High-level coordinates
 from astropy.coordinates import ICRS, Galactic, FK4, FK5, AltAz  # Low-level frames
 from astropy.coordinates import Angle, Latitude, Longitude  # Angles
 from astropy.coordinates import EarthLocation
+from astropy.coordinates import get_sun
 
 from astropy.utils import iers
 print "IERS sould be updated from", iers.IERS_A_URL
@@ -156,8 +157,9 @@ class drive(object):
                 print "3, ha/dec:", ha, dec
 
                 ha = ha + 0
-                dec = dec + 0
+                dec = dec + 90
 
+                print "4, ha/dec:", ha, dec
 
                 self.AxA.Float()
                 self.AxB.Float()
@@ -249,12 +251,12 @@ class drive(object):
 
         self.AxA = axis.axis(self.spi, self.spi.I2CSPI_SS1, 1, 1)    # set Number of Steps per axis Unit and set Direction of Rotation
         self.AxA.Reset()
-        self.AxA.MaxSpeed(0x32ffff)                      # set maximal motor speed 
+        self.AxA.MaxSpeed(0x33ffff)                      # set maximal motor speed 
 
 
         self.AxB = axis.axis(self.spi, self.spi.I2CSPI_SS0, 1, 1)    
         self.AxB.Reset()
-        self.AxB.MaxSpeed(0x32ffff)                      # set maximal motor speed
+        self.AxB.MaxSpeed(0x33ffff)                      # set maximal motor speed
 
 
         #self.AxB.MoveWait(2000)
@@ -303,10 +305,18 @@ def main():
         #driver.Slew(SkyCoord(alt = 1, az = 90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
 
         #driver.Slew(SkyCoord(ra = 1.3, dec = 0, obstime = Time.now(), frame = 'icrs', unit="deg", location = driver.getObs()))
+        
 
-        driver.Slew(SkyCoord(alt = 45, az = 45+180+90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
 
-        #driver.Slew(SkyCoord(alt = 10, az = 180, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
+        print "sun", get_sun(Time.now()).icrs
+        #driver.Slew(get_sun(Time.now()))
+
+
+
+
+        #driver.Slew(SkyCoord(alt = 45, az = 45+180+90, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
+
+        driver.Slew(SkyCoord(alt = 45, az = 45, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
 
         #driver.Slew(SkyCoord(alt = 10, az = 180, obstime = Time.now(), frame = 'altaz', unit="deg", location = driver.getObs()).icrs)
 
