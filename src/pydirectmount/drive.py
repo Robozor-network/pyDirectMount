@@ -97,6 +97,7 @@ class drive(object):
                 print "slew mode"
                 print "============"
                 print "pozadovane souradnice:", self.mount_target
+                print "AltAz:", self.mount_target.transform_to(AltAz(obstime = Time.now(), location=self.observatory))
 
                 target = self.mount_target
                 self.mount_target = False
@@ -127,46 +128,45 @@ class drive(object):
 
                 print "1, ha/dec:", ha, dec, "z ra", target.ra.degree
                 
-                ha = -(((ha + 180) % 360 - 180)+90)
-                dec = -(((dec + 180) % 360 - 180))
+                ha = (((ha + 180) % 360 - 180))
+                dec = (((dec + 180) % 360 - 180))
 
                 print "2, ha/dec:",ha, dec
 
 
-
-                if -180 <= ha <= -90:
+                if -180 <= ha <= -90: # OK
                     print "mode: -180 - -90"
-                    ha = ha+180
-                    dec = dec-180
+                    ha = - (ha + 90)
+                    dec = - (dec - 90)
 
-                elif -90  <= ha <=   0:   # OK
+                elif -90  <= ha <=   0:  # OK  
                     print "mode: -90 - 0" ####
-                    ha = ha
-                    dec = dec
+                    ha = - (ha + 90)
+                    dec = - (dec - 90)
 
-                elif 0 <= ha <=  90:    # OK
+                elif 0 <= ha <=  90:
                     print "mode: 0 - 90"
-                    ha = ha
-                    dec = dec
+                    ha =   (90 - ha)
+                    dec =  (dec - 90)
 
                 elif 90 <= ha <= 180:
                     print "mode: 90 - 180"
-                    ha = ha
-                    dec = dec
+                    ha =  (90 - ha)
+                    dec =  (dec - 90)
 
                 else:
                     print "CHYBA --- out of range", ha, dec
 
                 print "3, ha/dec:", ha, dec
 
-                ha = ha + 0
-                dec = dec + 90
+                ha = ha
+                dec = dec 
 
                 print "4, ha/dec:", ha, dec
 
-                self.AxA.Float()
-                self.AxB.Float()
-                time.sleep(0.5)
+                #self.AxA.Float()
+                #self.AxB.Float()
+                #time.sleep(0.5)
 
                 self.AxA.GoTo(int(ha *self.mount_stepsperdeg[0]))
                 self.AxB.GoTo(int(dec*self.mount_stepsperdeg[1]))
@@ -248,10 +248,10 @@ class drive(object):
         self.AxB.MaxSpeed(0x33ffff)                      # set maximal motor speed
 
 
-        self.AxB.MoveWait(2000)
-        self.AxA.MoveWait(2000)
-        self.AxB.MoveWait(-2000)
-        self.AxA.MoveWait(-2000)
+        #self.AxA.MoveWait(2000)
+        #self.AxA.MoveWait(-2000)
+        #self.AxB.MoveWait(2000)
+        #self.AxB.MoveWait(-2000)
 
         
 
