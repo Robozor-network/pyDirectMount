@@ -32,31 +32,43 @@ class axis:
     def Reset(self):
         ' Reset Axis and set default parameters for H-bridge '
         self.writeByte(self.CS, 0xC0)      # reset
+
         #self.writeByte(self.CS, 0x14)      # Stall Treshold setup
         #self.writeByte(self.CS, 0xFF)  
         #self.writeByte(self.CS, 0x13)      # Over Current Treshold setup 
-        #self.writeByte(self.CS, 0xFF)  
+        #self.writeByte(self.CS, 0xFF)
+
         self.writeByte(self.CS, 0x15)      # Full Step speed 
         self.writeByte(self.CS, 0xFF)
-        self.writeByte(self.CS, 0xFF) 
-        self.writeByte(self.CS, 0xFF) 
-        self.writeByte(self.CS, 0x00)      # ACC 
+        self.writeByte(self.CS, 0xFF)
+        self.writeByte(self.CS, 0xFF)
+
+        self.writeByte(self.CS, 0x05)      # ACC (0x008a)
         self.writeByte(self.CS, 0x00)
-        self.writeByte(self.CS, 0x01) 
-        self.writeByte(self.CS, 0x00)      # DEC 
+        self.writeByte(self.CS, 0x8a)
+
+        self.writeByte(self.CS, 0x06)      # DEC (0x008a)
         self.writeByte(self.CS, 0x00)
-        self.writeByte(self.CS, 0x01) 
-        self.writeByte(self.CS, 0x0A)      # KVAL_RUN
+        self.writeByte(self.CS, 0x8a)
+
+        self.writeByte(self.CS, 0x0A)      # KVAL_RUN -  Constant speed
         self.writeByte(self.CS, 0xF0)
+
         self.writeByte(self.CS, 0x0B)      # KVAL_ACC
         self.writeByte(self.CS, 0xF0)
+
         self.writeByte(self.CS, 0x0C)      # KVAL_DEC
         self.writeByte(self.CS, 0xF0)
+
         self.writeByte(self.CS, 0x18)      # CONFIG
+        #self.writeByte(self.CS, 0x00)
         self.writeByte(self.CS, 0b00111000)
         self.writeByte(self.CS, 0b00000000)
+        #self.writeByte(self.CS, 0b00111110)
+        #self.writeByte(self.CS, 0b10000000)
+
         self.writeByte(self.CS, 0x16)      # Microstepping
-        self.writeByte(self.CS, 0b00000100)
+        self.writeByte(self.CS, 0x04)      # 0x04 - 1/16
       
     def MaxSpeed(self, speed):
         ' Setup of maximum speed '
@@ -67,7 +79,6 @@ class axis:
         self.writeByte(self.CS, (speed) & 0xFF)  
 
     def GoTo(self, abspos):
-        ' Setup of maximum speed '
         self.writeByte(self.CS, 0x60)       # Max Speed setup 
         self.writeByte(self.CS, (abspos >> 16) & 0xFF)  
         self.writeByte(self.CS, (abspos >> 8) & 0xFF)  
@@ -79,7 +90,7 @@ class axis:
         while self.ReadStatusBit(2) == 1:           # is Limit Switch ON ?
             self.writeByte(self.CS, 0x92 | (~self.Dir & 1))     # release SW 
             while self.IsBusy():
-                pass
+                time.sleep(0.25)
             self.MoveWait(10)           # move 10 units away
  
     def GoZero(self, speed):
@@ -90,7 +101,7 @@ class axis:
         self.writeByte(self.CS, 0x00)
         self.writeByte(self.CS, speed)  
         while self.IsBusy():
-            pass
+            time.sleep(0.25)
         time.sleep(0.3)
         self.ReleaseSW()
 
@@ -101,8 +112,7 @@ class axis:
         self.writeByte(self.CS, 0x70)       # Go to Zero
         self.writeByte(self.CS, 0x00)
         while self.IsBusy() and wait:
-            pass
-
+            time.sleep(0.25)
 
     def ResetPos(self):
         self.writeByte(self.CS, 0xD8)       # Reset position
@@ -129,19 +139,34 @@ class axis:
             pass
 
     def Run(self, direction, speed):
-        speed_value = int(speed / 0.015)
+        print "run", direction, speed
+        speed_value = int(abs(speed) / 0.015)
 
-        data = [0b01010000 + direction]
+        if speed < 0:
+            direction = not bool(direction)
+
+        self.writeByte(self.CS, 0b01010000 + int(direction))
+        self.writeByte(self.CS, (speed_value >> 16) & 0xFF)
+        self.writeByte(self.CS, (speed_value >> 8) & 0xFF)
+        self.writeByte(self.CS, (speed_value >> 0) & 0xFF)
+
+        data = [0b01010000 + int(direction)]
         data = data +[(speed_value >> i & 0xff) for i in (16,8,0)]
-        self.writeByte(self.CS,data[0])       # Max Speed setup 
-        self.writeByte(self.CS,data[1])
-        self.writeByte(self.CS,data[2])  
-        self.writeByte(self.CS,data[3])
-        print speed_value, data
+        print data
+        for x in data:
+            print format(speed_value, '08b'),
+        print ""
+        #self.writeByte(self.CS,data[0])       # Max Speed setup 
+        #self.writeByte(self.CS,data[1])
+        #self.writeByte(self.CS,data[2])  
+        #self.writeByte(self.CS,data[3])
+        #print speed_value, data
         return (speed_value * 0.015)
+        #return (speed_value)
 
     def Float(self):
         ' switch H-bridge to High impedance state '
+        print "switch H-bridge to High impedance state"
         self.writeByte(self.CS, 0xA0)
 
     def ReadStatusBit(self, bit):
@@ -169,10 +194,13 @@ class axis:
 
     def ABS_POS(self):
         return 0x01
+
     def EL_POS(self):
         return 0x02
+
     def MARK(self):
         return 0x03
+
     def SPEED(self):
         return 0x04
 
