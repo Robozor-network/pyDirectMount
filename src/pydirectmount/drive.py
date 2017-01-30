@@ -50,11 +50,12 @@ class drive(object):
         self.mount_steps = (steps_per_revA, steps_per_revB)
         self.mount_direction = (reverseA, reverseB)
         self.speedMode = speedMode # 'sidereal' - rychlost pohybu hvezd, 'off' - vypnuty hodinovy stroj, 'custom' - vlastni rychlost, 'solar', 'lunal', ...
-        self.trackingSpeed = [50, 50]
+        self.trackingSpeed = [90, 0]
         self.speedModeVelocity = 0
         self.connectMethod = connectMethod
         self.mount_position = SkyCoord(0, 0, frame = "icrs", unit="deg")
         self.home_position = SkyCoord(alt = obs_lat, az = 0, obstime = Time.now(), frame = 'altaz', unit="deg", location = self.observatory)
+        self.mountCoord = self.mount_position
         self.mount_position = self.home_position.icrs
         self.mount_target = False
         self.mount_slew = False
@@ -116,9 +117,9 @@ class drive(object):
         pass
 
     def GetHaDecCoordinates(self, coordinates):                
-        now = datetime.datetime.utcnow()
-        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        HAvariable = ((now - midnight).seconds/(24*60*60.0))/360.0 - self.observatory.longitude.degree
+        #now = datetime.datetime.utcnow()
+        #midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        #HAvariable = ((now - midnight).seconds/(24*60*60.0))/360.0 - self.observatory.longitude.degree
 
         t2 = Time(str(Time.now()), scale='utc', location=self.observatory)
         HAvariable = t2.sidereal_time('mean').degree
@@ -136,7 +137,7 @@ class drive(object):
             ha  = - (ha.degree - 90)
             dec =  (dec.degree - 90)
         else:
-            print "CHYBA --- out of range", ha, dec
+            print "Err --- out of range", ha, dec
             ha = None
             dec = None
 
@@ -162,15 +163,17 @@ class drive(object):
         self.AxA = axis.axis(self.pymlab, 0b0001, 1, 1, protocol = 'arom')    # set Number of Steps per axis Unit and set Direction of Rotation
         self.AxA.Reset()
         #self.AxA.MaxSpeed(0x33ffff)                      # set maximal motor speed 
+        self.AxA.MaxSpeed(0x33ff)
 
         self.AxB = axis.axis(self.pymlab, 0b0010, 1, 1, protocol = 'arom')    
         self.AxB.Reset()
         #self.AxB.MaxSpeed(0x33ffff)                      # set maximal motor speed
+        self.AxB.MaxSpeed(0x33ff)
 
         print "Movement Test"
         self.AxA.MoveWait(2000)
-        self.AxA.MoveWait(2000)
-        self.AxB.MoveWait(-2000)
+        self.AxA.MoveWait(-2000)
+        self.AxB.MoveWait(2000)
         self.AxB.MoveWait(-2000)
         
 
@@ -276,12 +279,75 @@ class drive(object):
         self.trackingSpeed[0] = float(dec)
         self.trackingSpeed[1] = float(ra)
 
+    def setMaxSpeed(self, spd):
+        print "maximal speed:", spd
+        self.AxA.MaxSpeed(int(spd))
+        self.AxB.MaxSpeed(int(spd))
+
     def getCoordinates(self, mode = "RaDec"):
         try:
-            return self.mount_position
+            return self.mountCoord
+            #return self.mount_position
         except Exception, e:
             return None
 
+    def getAxisPosition(self):
+        axa = self.AxA.ReadPosition()
+        axb = self.AxB.ReadPosition()
+
+
+        print "*******************************************"
+        print "raw", (axa, axb)
+        print "count1C ", ( Angle(90*u.deg)-Angle(axa/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d') , Angle(90, unit="deg")-(Angle(axb/self.mount_stepsperdeg[1], unit="deg").wrap_at('360d')) ),              Angle((90*u.deg)-Angle(axa/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')).to_string(unit=u.hour)
+        print "count1D ", ( Angle(90*u.deg)-Angle(axa/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')+(180*u.deg) , Angle(90, unit="deg")-(Angle(axb/self.mount_stepsperdeg[1], unit="deg").wrap_at('360d')) ),        Angle((90*u.deg)-Angle(axa/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')+(180*u.deg)).to_string(unit=u.hour)
+
+        out_a = Angle(0*u.deg)
+        out_b = Angle(0*u.deg)
+
+
+        if axa < (2**22)/4:
+            x_ha = axa/self.mount_stepsperdeg[0]
+            if axb < (2**22)/4:
+                print "SEKTOR I (0-90)"
+                out_a = Angle(-1*(x_ha+90)*u.deg).wrap_at('360d')
+            else:
+                print "SEKTOR III (180-270)"
+                out_a = Angle(-1*(x_ha-90)*u.deg).wrap_at('360d')
+        else:
+            x_ha = (2**22-axa)/self.mount_stepsperdeg[0]
+            if axb < (2**22)/4:
+                print "SEKTOR II (90-180)"
+                out_a = Angle(x_ha*u.deg+270*u.deg)
+            else:
+                print "SEKTOR IV (270-360)"
+                out_a = Angle(x_ha*u.deg)
+
+
+
+        LST = Time(str(Time.now()), scale='utc', location=self.observatory).sidereal_time('mean')
+        print LST
+        print Angle(LST)
+        print out_a
+        print Angle(out_a)
+        try:
+            print Angle(LST) - Angle(out_a)
+            self.mountCoord = SkyCoord(ra = Angle(Angle(LST) - Angle(out_a)), dec = self.mount_position.dec, obstime = Time.now(), unit="deg", frame = "icrs", location = self.observatory)
+            print Angle(out_b)
+
+        except Exception, e:
+            print "ERRRRRRRRRR"
+            print e
+            self.mountCoord = SkyCoord(ra = 0, dec = 0, obstime = Time.now(), unit="deg", frame = "icrs", location = self.observatory)
+        
+        print self.mountCoord
+        return self.mountCoord
+
+    def realAxisCoord(self, AxisPos):
+        ra, dec = AxisPos
+        ha_c = ra/self.mount_stepsperdeg[0]
+        dec_c= dec/self.mount_stepsperdeg[1]
+
+        return (ha_c, dec_c)
 
     def getStatus(self):
         pass
@@ -291,18 +357,18 @@ class drive(object):
         while getattr(self, "run", True):
             print "ActBuff:", len(self.driver_action_buffer), self.driver_action_now,  self.driver_action_buffer[self.driver_action_now-1]
             driver_action, driver_action_params = self.driver_action_buffer[self.driver_action_now-1].items()[0]
-            self.AxA.ReadStatusReg()
 
             if self.driver_action_status in [0,1] and len(self.driver_action_buffer) > self.driver_action_now:
                 # kdyz je status akce je 0 nebo 1 (dokonceno nebo lze prerusit) a v bufferu je nejaka dalsi akce
                 # tak prejdu na dalsi akci
                 self.driver_action_now += 1
-                print "Mam novou akci - prechazim na dalsi:", self.driver_action_now
+                print "Mam novou akci - prechazim na dalsi:", self.driver_action_now, self.driver_action_buffer[self.driver_action_now-1]
 
             AxA_mountDir, AxB_mountDir = self.mount_direction
 
             self.realAxisPos = (self.AxA.ReadPosition(),self.AxB.ReadPosition())
-            print self.realAxisPos
+            axis_ha, axis_ra = self.realAxisCoord(self.realAxisPos)
+            
 
             if driver_action == 'home':
                 self.driver_action_status = 3
@@ -321,15 +387,14 @@ class drive(object):
                 print "============"
                 print "pozadovane souradnice: ", self.mount_target.to_string('hmsdms')
                 print "pozadovane souradnice: ", self.mount_target.to_string('dms')
-                print "AltAz                : ", self.mount_target.transform_to(AltAz(obstime = Time.now(), location=self.observatory)).to_string('dms')
+                print "AzAlt                : ", self.mount_target.transform_to(AltAz(obstime = Time.now(), location=self.observatory)).to_string('dms')
 
-                print "stepper position:", self.getStepperPosition(self.mount_target)
                 target = self.mount_target
 
                 ha, dec = self.GetHaDecCoordinates(target)
 
                 print "Ha [deg]  [h]        : ", ha, ha/15
-                print ""
+                print "Pozice montaze ra,dec:", ha *self.mount_stepsperdeg[0], dec *self.mount_stepsperdeg[1]
                 print ""
 
                 self.AxA.GoTo(int(ha *self.mount_stepsperdeg[0]))
@@ -339,6 +404,7 @@ class drive(object):
                     reg_a = self.AxA.ReadStatusReg()
                     reg_b = self.AxB.ReadStatusReg()
                     print reg_a, reg_b
+                    self.getAxisPosition()
                     time.sleep(0.5)
 
 
@@ -418,7 +484,7 @@ class drive(object):
                         #self.AxA.Run(AxA_mountDir, 0b1000000000000)
                         self.AxA.Run(AxA_mountDir, self.trackingSpeed[0])
                         self.AxB.Run(AxA_mountDir, self.trackingSpeed[1])
-                        #self.driver_action_status = 0
+                        self.driver_action_status = 0
 
                 elif tracking_mode == 'orbit':
 

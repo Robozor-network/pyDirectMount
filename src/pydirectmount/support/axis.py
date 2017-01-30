@@ -33,10 +33,11 @@ class axis:
         ' Reset Axis and set default parameters for H-bridge '
         self.writeByte(self.CS, 0xC0)      # reset
 
-        #self.writeByte(self.CS, 0x14)      # Stall Treshold setup
-        #self.writeByte(self.CS, 0xFF)  
-        #self.writeByte(self.CS, 0x13)      # Over Current Treshold setup 
-        #self.writeByte(self.CS, 0xFF)
+        self.writeByte(self.CS, 0x14)      # Stall Treshold setup
+        self.writeByte(self.CS, 0x70)      # 0x70 = 3.5A
+        
+        self.writeByte(self.CS, 0x13)      # Over Current Treshold setup 
+        self.writeByte(self.CS, 0x0A)      # 0x0A = 4A
 
         self.writeByte(self.CS, 0x15)      # Full Step speed 
         self.writeByte(self.CS, 0xFF)
@@ -45,20 +46,25 @@ class axis:
 
         self.writeByte(self.CS, 0x05)      # ACC (0x008a)
         self.writeByte(self.CS, 0x00)
-        self.writeByte(self.CS, 0x8a)
+        self.writeByte(self.CS, 0x5a)
 
         self.writeByte(self.CS, 0x06)      # DEC (0x008a)
         self.writeByte(self.CS, 0x00)
-        self.writeByte(self.CS, 0x8a)
+        self.writeByte(self.CS, 0x5a)
 
-        self.writeByte(self.CS, 0x0A)      # KVAL_RUN -  Constant speed
-        self.writeByte(self.CS, 0xF0)
+        #self.writeByte(self.CS, 0x0A)      # KVAL_RUN -  Constant speed
+        #self.writeByte(self.CS, 0xF0)
 
         self.writeByte(self.CS, 0x0B)      # KVAL_ACC
         self.writeByte(self.CS, 0xF0)
 
         self.writeByte(self.CS, 0x0C)      # KVAL_DEC
         self.writeByte(self.CS, 0xF0)
+
+        self.writeByte(self.CS, 0x08)      # MinSpeed 0x1000 - LSPD_OPT - Low speed optimization
+        self.writeByte(self.CS, 0x10)
+        self.writeByte(self.CS, 0x00)
+
 
         self.writeByte(self.CS, 0x18)      # CONFIG
         #self.writeByte(self.CS, 0x00)
@@ -73,7 +79,7 @@ class axis:
     def MaxSpeed(self, speed):
         ' Setup of maximum speed '
         self.writeByte(self.CS, 0x07)       # Max Speed setup 
-        self.writeByte(self.CS, 0x00)
+        #self.writeByte(self.CS, 0x00)
         self.writeByte(self.CS, (speed >> 16) & 0xFF)  
         self.writeByte(self.CS, (speed >> 8) & 0xFF)  
         self.writeByte(self.CS, (speed) & 0xFF)  
@@ -140,7 +146,8 @@ class axis:
 
     def Run(self, direction, speed):
         print "run", direction, speed
-        speed_value = int(abs(speed) / 0.015)
+        #speed_value = int(abs(speed) / 0.015)
+        speed_value = int(abs(speed))
 
         if speed < 0:
             direction = not bool(direction)
@@ -149,20 +156,21 @@ class axis:
         self.writeByte(self.CS, (speed_value >> 16) & 0xFF)
         self.writeByte(self.CS, (speed_value >> 8) & 0xFF)
         self.writeByte(self.CS, (speed_value >> 0) & 0xFF)
+        print format(0b01010000 + int(direction), '08b'), format(speed_value, '20b')
 
-        data = [0b01010000 + int(direction)]
-        data = data +[(speed_value >> i & 0xff) for i in (16,8,0)]
-        print data
-        for x in data:
-            print format(speed_value, '08b'),
-        print ""
+        #data = [0b01010000 + int(direction)]
+        #data = data +[(speed_value >> i & 0xff) for i in (16,8,0)]
+        #print data
+        #for x in data:
+        #    print format(speed_value, '08b'),
+        #print ""
         #self.writeByte(self.CS,data[0])       # Max Speed setup 
         #self.writeByte(self.CS,data[1])
         #self.writeByte(self.CS,data[2])  
         #self.writeByte(self.CS,data[3])
         #print speed_value, data
-        return (speed_value * 0.015)
-        #return (speed_value)
+        #return (speed_value * 0.015)
+        return (speed_value)
 
     def Float(self):
         ' switch H-bridge to High impedance state '
@@ -189,8 +197,8 @@ class axis:
         data0 = self.readByte()           # 1st byte
         self.writeByte(self.CS, 0x00)
         data1 = self.readByte() 
-        print  "\t\t\t\t ", bin(data0)[2:].zfill(8), bin(data1)[2:].zfill(8), self.ReadStatusBit(4)   
-        #return (data0, data1)
+        print  "\t\t\t\t ", format(data0 << 8 | data1, '08b')
+        return data0 << 8 | data1
 
     def ABS_POS(self):
         return 0x01

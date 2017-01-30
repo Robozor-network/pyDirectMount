@@ -5,8 +5,7 @@ from astropy.coordinates import get_sun
 import time
 
 from astropy.utils import iers
-print "IERS sould be updated from", iers.IERS_A_URL
-iers.IERS.iers_table = iers.IERS_A.open("/home/odroid/finals2000A.all")
+#print "IERS sould be updated from", iers.IERS_A_URL
 #iers.IERS.iers_table = iers.IERS_A.open(iers.IERS_A_URL)
 
 

@@ -12,12 +12,23 @@ from astropy.utils import iers
 def main():
     try:
         mount = drive(profile = 'HEQ5', mode = "eq", connectMethod = 'pymlab',
-            obs_lat = 48.986976, obs_lon = 14.467532, obs_alt = 300, port = '/dev/ttyUSB0')
+            obs_lat = 48.986976, obs_lon = 14.467532, obs_alt = 300, port = '/dev/ttyUSB1')
 
         mount.run()
         mount.UnPark()
-        mount.setTrackingSpeed(ra = 1, dec = 1)
+        print ">>>>>>  setTrackingSpeed"
         mount.tracking(True)
+        mount.setTrackingSpeed(ra = 1, dec = 50)
+        for x in xrange(1,10):
+            mount.setTrackingSpeed(ra = 1, dec = 25*x)
+            time.sleep(2)
+        for x in xrange(10,1):
+            mount.setTrackingSpeed(ra = 1, dec = 25*x)
+            time.sleep(2)
+        #print ">>>>>>  tracking(true)"
+        #mount.tracking(True)
+        #print ">>>>>>  setTrackingSpeed"
+        #mount.setTrackingSpeed(ra = 1, dec = 50)
         
         while True:
             pass
