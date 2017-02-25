@@ -291,6 +291,11 @@ class drive(object):
         except Exception, e:
             return None
 
+    def getStepperPosition(self):
+        axa = self.AxA.ReadPosition()
+        axb = self.AxB.ReadPosition()
+        return (axa, axb)
+
     def getAxisPosition(self):
         axa = self.AxA.ReadPosition()
         axb = self.AxB.ReadPosition()
