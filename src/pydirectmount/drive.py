@@ -7,12 +7,12 @@ import time
 import datetime
 import math
 from pymlab import config
-from support import axis
+#from support import axis
+import axis
 from threading import Thread
 import numpy as np
-import rospy
-from arom.srv import *
-from arom.msg import *
+#from arom.srv import *
+#from arom.msg import *
 
 import ephem
 from astropy import units as u
@@ -23,9 +23,9 @@ from astropy.coordinates import Angle, Latitude, Longitude  # Angles
 from astropy.coordinates import EarthLocation
 from astropy.coordinates import get_sun
 
-#from astropy.utils import iers
+from astropy.utils import iers
 #print "IERS sould be updated from", iers.IERS_A_URL
-#iers.IERS.iers_table = iers.IERS_A.open("/home/odroid/finals2000A.all")
+iers.IERS.iers_table = iers.IERS_A.open("/home/odroid/finals2000A.all")
 
 #from astroplan import download_IERS_A
 #download_IERS_A()
@@ -33,6 +33,7 @@ from astropy.coordinates import get_sun
 
 
 class drive(object):
+    status_callback = None
 
     def __init__(self, profile = False, mode = "eq", steps_per_revA = 0, reverseA = False,
                 steps_per_revB = 0, reverseB = False, speedMode = 'off', connectMethod = 'pymlab',
@@ -62,24 +63,6 @@ class drive(object):
         self.park = True
         self.realAxisPos = (0,0)
 
-
-        self.ra_kp = 0.0425
-        self.ra_ip = 0.08
-        self.Kd = 0.08
-        self.ra_Derivator=0
-        self.ra_Integrator=0
-        self.ra_Integrator_max = 10
-        self.ra_Integrator_min = 10
-        self.ra_error=0.0
-
-        self.dec_kp = 0.0425
-        self.dec_ip = 0.08
-        self.Kd = 0.08
-        self.dec_Derivator=0
-        self.dec_Integrator=0
-        self.dec_Integrator_max = 10
-        self.dec_Integrator_min = 10
-        self.dec_error=0.0
 
 
         if connect:
@@ -152,29 +135,49 @@ class drive(object):
         self.t1.start()
 
     def connect(self):
-        
-        self.pymlab = rospy.ServiceProxy('pymlab_drive', PymlabDrive)
-        
-        print eval(self.pymlab(device="telescope_spi", method="route").value)
-        print eval(self.pymlab(device="telescope_spi", method="SPI_config", parameters="0b1001").value) # self.spi.I2CSPI_MSB_FIRST| self.spi.I2CSPI_MODE_CLK_IDLE_HIGH_DATA_EDGE_TRAILING| self.spi.I2CSPI_CLK_461kHz
+        if self.connectMethod == 'pymlab_bridge':
+            print("CONNECT")
+            import rospy
+            from arom.srv import PymlabDrive
 
-        time.sleep(.25)
-        print self.pymlab
-        self.AxA = axis.axis(self.pymlab, 0b0001, 1, 1, protocol = 'arom')    # set Number of Steps per axis Unit and set Direction of Rotation
-        self.AxA.Reset()
+            self.pymlab = rospy.ServiceProxy('pymlab_drive', PymlabDrive)
+            rospy.set_param('/arom/node'+rospy.get_name()+"/pymlab", True)
+            
+            self.AxA = axis.axis(SPI = self.pymlab, SPI_CS = 0b0001, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
+            self.AxA.Setup(
+                       MAX_SPEED = 1000,
+                       KVAL_ACC=0.2,
+                       KVAL_RUN=0.2,
+                       KVAL_DEC=0.2,
+                       ACC = 100,
+                       DEC = 1000,
+                       FS_SPD=3000,
+            STEP_MODE=axis.axis.STEP_MODE_FULL)
+            self.AxB = axis.axis(SPI = self.pymlab, SPI_CS = 0b0010, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
+            self.AxB.Setup(
+                       MAX_SPEED = 1000,
+                       KVAL_ACC=0.2,
+                       KVAL_RUN=0.2,
+                       KVAL_DEC=0.2,
+                       ACC = 100,
+                       DEC = 1000,
+                       FS_SPD=3000,
+            STEP_MODE=axis.axis.STEP_MODE_FULL)
+            time.sleep(.25)
+
+        #self.AxA.Reset()
         #self.AxA.MaxSpeed(0x33ffff)                      # set maximal motor speed 
-        self.AxA.MaxSpeed(0x33ff)
+        #self.AxA.MaxSpeed(0x33ff)
 
-        self.AxB = axis.axis(self.pymlab, 0b0010, 1, 1, protocol = 'arom')    
-        self.AxB.Reset()
+        #self.AxB.Reset()
         #self.AxB.MaxSpeed(0x33ffff)                      # set maximal motor speed
-        self.AxB.MaxSpeed(0x33ff)
+        #self.AxB.MaxSpeed(0x33ff)
 
         print "Movement Test"
-        self.AxA.MoveWait(2000)
-        self.AxA.MoveWait(-2000)
-        self.AxB.MoveWait(2000)
-        self.AxB.MoveWait(-2000)
+        self.AxA.MoveWait(200)
+        self.AxA.MoveWait(-200)
+        self.AxB.MoveWait(200)
+        self.AxB.MoveWait(-200)
         
 
     def Slew(self, target):
@@ -284,21 +287,29 @@ class drive(object):
         self.AxA.MaxSpeed(int(spd))
         self.AxB.MaxSpeed(int(spd))
 
-    def getCoordinates(self, mode = "RaDec"):
+    def getCoordinates(self, sky = True):
         try:
             return self.mountCoord
             #return self.mount_position
         except Exception, e:
             return None
 
+    def getStepperStatus(self):
+        return (self.AxA.getStatus(), self.AxB.getStatus())
+        #return (getStatus,{})
+
     def getStepperPosition(self):
-        axa = self.AxA.ReadPosition()
-        axb = self.AxB.ReadPosition()
+        axa = self.AxA.getPosition()
+        axb = self.AxB.getPosition()
         return (axa, axb)
 
+    def getDefaultTrackingSpd(self):
+        return self.trackingSpeed
+
+
     def getAxisPosition(self):
-        axa = self.AxA.ReadPosition()
-        axb = self.AxB.ReadPosition()
+        axa = self.AxA.getPosition()
+        axb = self.AxB.getPosition()
 
 
         print "*******************************************"
@@ -358,31 +369,37 @@ class drive(object):
         pass
 
     def mThread(self):
+        last_status_callback = time.time()
         ha = 0
         while getattr(self, "run", True):
-            print "ActBuff:", len(self.driver_action_buffer), self.driver_action_now,  self.driver_action_buffer[self.driver_action_now-1]
+            time.sleep(0.25)
+            print("ActBuff:", len(self.driver_action_buffer), self.driver_action_now,  self.driver_action_buffer[self.driver_action_now-1])
             driver_action, driver_action_params = self.driver_action_buffer[self.driver_action_now-1].items()[0]
 
             if self.driver_action_status in [0,1] and len(self.driver_action_buffer) > self.driver_action_now:
                 # kdyz je status akce je 0 nebo 1 (dokonceno nebo lze prerusit) a v bufferu je nejaka dalsi akce
+                # 999 - je novy prikaz
                 # tak prejdu na dalsi akci
                 self.driver_action_now += 1
-                print "Mam novou akci - prechazim na dalsi:", self.driver_action_now, self.driver_action_buffer[self.driver_action_now-1]
+                print("Mam novou akci - prechazim na dalsi: ", self.driver_action_now, self.driver_action_buffer[self.driver_action_now-1])
+                self.driver_action_status = 999
 
             AxA_mountDir, AxB_mountDir = self.mount_direction
 
-            self.realAxisPos = (self.AxA.ReadPosition(),self.AxB.ReadPosition())
+            self.realAxisPos = (self.AxA.getPosition(),self.AxB.getPosition())
             axis_ha, axis_ra = self.realAxisCoord(self.realAxisPos)
             
 
-            if driver_action == 'home':
-                self.driver_action_status = 3
-                print "park"
-                self.AxA.GoHome(False)
-                self.AxB.GoHome(False)
-                while self.AxA.IsBusy() | self.AxB.IsBusy():
-                    time.sleep(0.35)
+            if driver_action == 'home' and self.driver_action_status != 0:
+                pass
                 self.driver_action_status = 0
+                print("park", self.driver_action_status)
+                #self.AxA.Float()
+                #self.AxB.Float()
+                #self.AxA.GoHome(False)
+                #self.AxB.GoHome(False)
+                #while self.AxA.IsBusy() | self.AxB.IsBusy():
+                #    time.sleep(0.35)
             
             elif driver_action == 'slew':
                 self.driver_action_status = 3 # pracuji - neprerusovat
@@ -448,8 +465,8 @@ class drive(object):
                         time.sleep(1)
                         '''
                         ha, dec = self.GetHaDecCoordinates(target)
-                        self.error = -((int(ha*self.mount_stepsperdeg[0])+2**21)-(self.AxA.ReadPosition()-2**21))*10
-                        print "pozadovana pozice", ha, "HA:", int(ha*self.mount_stepsperdeg[0])+2**21, "realna pozice", self.AxA.ReadPosition()-2**21, "rozdil:", self.error
+                        self.error = -((int(ha*self.mount_stepsperdeg[0])+2**21)-(self.AxA.getPosition()-2**21))*10
+                        print "pozadovana pozice", ha, "HA:", int(ha*self.mount_stepsperdeg[0])+2**21, "realna pozice", self.AxA.getPosition()-2**21, "rozdil:", self.error
 
                         
                         self.ra_P_val = self.ra_kp * self.error
@@ -499,10 +516,10 @@ class drive(object):
 
                         '''
                         ha, dec = self.GetHaDecCoordinates(self.GetCoordByTLE('ISS'))
-                        self.ra_error = -((int(ha*self.mount_stepsperdeg[0])+2**21)-(self.AxA.ReadPosition()-2**21))*10
-                        self.dec_error = -((int(ha*self.mount_stepsperdeg[1])+2**21)-(self.AxB.ReadPosition()-2**21))*10
+                        self.ra_error = -((int(ha*self.mount_stepsperdeg[0])+2**21)-(self.AxA.getPosition()-2**21))*10
+                        self.dec_error = -((int(ha*self.mount_stepsperdeg[1])+2**21)-(self.AxB.getPosition()-2**21))*10
 
-                        print "pozadovana pozice", ha, "HA:", int(ha*self.mount_stepsperdeg[0])+2**21, "realna pozice", self.AxA.ReadPosition()-2**21, "rozdil:", self.ra_error
+                        print "pozadovana pozice", ha, "HA:", int(ha*self.mount_stepsperdeg[0])+2**21, "realna pozice", self.AxA.getPosition()-2**21, "rozdil:", self.ra_error
 
                         self.ra_P_val = self.ra_kp * self.ra_error
                         self.ra_Derivator = self.ra_error
@@ -572,7 +589,13 @@ class drive(object):
                         self.AxB.Run(int(dire), abs(dec_PID)/10)
                         '''
 
-
+            if self.status_callback and time.time() > last_status_callback + 3:
+                try:
+                    self.status_callback(self.mount_target, self.mount_position, self.AxA.getStatus(), self.AxB.getStatus())
+                    last_status_callback = time.time()
+                except Exception as e:
+                    print(e)
+                
 def main():
     try:
         driver = drive(profile = 'HEQ5')
