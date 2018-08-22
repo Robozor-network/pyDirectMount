@@ -51,18 +51,14 @@ class drive(object):
         self.mount_steps = (steps_per_revA, steps_per_revB)
         self.mount_direction = (reverseA, reverseB)
         self.speedMode = speedMode # 'sidereal' - rychlost pohybu hvezd, 'off' - vypnuty hodinovy stroj, 'custom' - vlastni rychlost, 'solar', 'lunal', ...
-        self.trackingSpeed = [90, 0]
-        self.speedModeVelocity = 0
         self.connectMethod = connectMethod
         self.mount_position = SkyCoord(0, 0, frame = "icrs", unit="deg")
-        self.home_position = SkyCoord(alt = obs_lat, az = 0, obstime = Time.now(), frame = 'altaz', unit="deg", location = self.observatory)
+        self.home_position = SkyCoord(alt = 0, az = 90, obstime = Time.now(), frame = 'altaz', unit="deg", location = self.observatory)
         self.mountCoord = self.mount_position
         self.mount_position = self.home_position.icrs
         self.mount_target = False
         self.mount_slew = False
         self.park = True
-        self.realAxisPos = (0,0)
-
 
 
         if connect:
@@ -71,19 +67,34 @@ class drive(object):
         #TODO moznost nastavit profil a pak teprve upravit parametry ze zadain
         if profile == 'HEQ5':
             self.mount_mode = 'eq'
-            self.mount_steps = (2250429, 2250429) # osa RA zhruba zmerena na 13 238 879 kroku. bez nastaveni microsteppingu (tzn. 1/128), 
+            self.mount_steps = (2256680, 2256680) # osa RA zhruba zmerena na 13 238 879 kroku. bez nastaveni microsteppingu (tzn. 1/128), 
                                                   # 2250429 pri 1/16 microstep tzn. - cely registr je cca 1.9 otacky (mereno na RA)
             self.mount_direction = (False, False) # smer otaceni os
 
         self.mount_stepsperdeg = (self.mount_steps[0]/360.0, self.mount_steps[1]/360.0)
 
+
+        self.preset_speed = {
+            'sidereal': {
+                'name': 'Sidereal speed', 
+                'ra': self.mount_steps[0]/86164.09053083,
+                'dec': 0,
+            },
+            'solar': {
+                'name': 'Solar mean speed', 
+                'ra': self.mount_steps[0]/86400.002,
+                'dec': 0,
+            },
+            'lunar': {
+                'name': 'Lunar speed', 
+                'ra': self.mount_steps[0]/86000.00,
+                'dec': 0,
+            }
+        }
+        self.trackingSpeed = [self.preset_speed['sidereal']['ra'], self.preset_speed['sidereal']['dec']]
+
     def new_action(self, action, data=None):
         self.driver_action_buffer.append({action: data})
-
-    def beep(self, duration = 500):
-        self.spi.GPIO_write(0b11111111)
-        time.sleep(duration/1000)
-        self.spi.GPIO_write(0b00000000)
 
     def getObs(self):
         return self.observatory
@@ -92,33 +103,53 @@ class drive(object):
         self.driver_action_buffer.append({'tracking': {'mode': mode} })
         if mode:
             self.speedMode = mode
-            self.speedModeVelocity = velocity
-        print "movement Mode is", self.speedMode, " (", self.speedModeVelocity, ")"
-        return (self.speedMode, self.speedModeVelocity)
+        return (self.speedMode)
 
-    def getStepperPosition(self, coordinates):
-        pass
+    def calc_stepper_position(self, coordinates):
+        '''
+        This function determinate stepper positions from coordinates (icrs variable)
+        input:
+            coordinates: IRCS
+        output:
+            (ra, dec): positions of ra and dec axis
+        '''
+        ra, dec = self.GetHaDecCoordinates(coordinates)
+        return(ra*self.mount_stepsperdeg[0], dec*self.mount_stepsperdeg[1])
+
+    def get_LST(self):
+        """
+        Calculate LST (Local sideral time).
+        This value is useful for converting RA to HA angle
+
+        input:
+        output:
+            LST: angle of LST
+        """
+        t = Time(str(Time.now()), scale='utc', location=self.observatory)
+        return t.sidereal_time('mean').degree
+
 
     def GetHaDecCoordinates(self, coordinates):                
-        #now = datetime.datetime.utcnow()
-        #midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        #HAvariable = ((now - midnight).seconds/(24*60*60.0))/360.0 - self.observatory.longitude.degree
+        '''
+        This functions returns Ha (hour angle) and Dec (declination angle) from coordinates of target
+        input:
+            coordinates: ICRS
+        output:
+            (ha, dec):
+        '''
 
-        t2 = Time(str(Time.now()), scale='utc', location=self.observatory)
-        HAvariable = t2.sidereal_time('mean').degree
-
-        ha = Angle((HAvariable - coordinates.ra.degree), unit="deg").wrap_at('180d')
+        ha = Angle((self.get_LST() - coordinates.ra.degree), unit="deg").wrap_at('180d')
         dec = Angle(coordinates.dec.degree, unit="deg").wrap_at('180d')
 
         if ha.is_within_bounds('-180d', '0d'):
             #print "mode: -180 ~ 0"
-            ha =  - (ha.degree + 90)
-            dec = - (dec.degree - 90)
+            ha = -(ha.degree + 90)
+            dec= -(dec.degree - 90)
 
         elif ha.is_within_bounds('0d', '180d'):
             #print "mode: 0 ~ 180"
-            ha  = - (ha.degree - 90)
-            dec =  (dec.degree - 90)
+            ha = -(ha.degree - 90)
+            dec=  (dec.degree - 90)
         else:
             print "Err --- out of range", ha, dec
             ha = None
@@ -143,41 +174,33 @@ class drive(object):
             self.pymlab = rospy.ServiceProxy('pymlab_drive', PymlabDrive)
             rospy.set_param('/arom/node'+rospy.get_name()+"/pymlab", True)
             
-            self.AxA = axis.axis(SPI = self.pymlab, SPI_CS = 0b0001, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
-            self.AxA.Setup(
-                       MAX_SPEED = 1000,
-                       KVAL_ACC=0.2,
-                       KVAL_RUN=0.2,
-                       KVAL_DEC=0.2,
-                       ACC = 100,
-                       DEC = 1000,
-                       FS_SPD=3000,
-            STEP_MODE=axis.axis.STEP_MODE_FULL)
-            self.AxB = axis.axis(SPI = self.pymlab, SPI_CS = 0b0010, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
-            self.AxB.Setup(
-                       MAX_SPEED = 1000,
-                       KVAL_ACC=0.2,
-                       KVAL_RUN=0.2,
-                       KVAL_DEC=0.2,
-                       ACC = 100,
-                       DEC = 1000,
-                       FS_SPD=3000,
-            STEP_MODE=axis.axis.STEP_MODE_FULL)
+            self.m_ra = axis.axis(SPI = self.pymlab, SPI_CS = 0b0001, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
+            self.m_ra.Setup(
+                MAX_SPEED = 900,
+                KVAL_ACC=0.5,
+                KVAL_RUN=0.5,
+                KVAL_DEC=0.5,
+                ACC = 100,
+                DEC = 1000,
+                FS_SPD=3000,
+                STEP_MODE=axis.axis.STEP_MODE_1_16)
+            self.m_dec = axis.axis(SPI = self.pymlab, SPI_CS = 0b0010, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
+            self.m_dec.Setup(
+                MAX_SPEED = 900,
+                KVAL_ACC=0.5,
+                KVAL_RUN=0.5,
+                KVAL_DEC=0.5,
+                ACC = 100,
+                DEC = 1000,
+                FS_SPD=3000,
+                STEP_MODE=axis.axis.STEP_MODE_1_16)
             time.sleep(.25)
 
-        #self.AxA.Reset()
-        #self.AxA.MaxSpeed(0x33ffff)                      # set maximal motor speed 
-        #self.AxA.MaxSpeed(0x33ff)
-
-        #self.AxB.Reset()
-        #self.AxB.MaxSpeed(0x33ffff)                      # set maximal motor speed
-        #self.AxB.MaxSpeed(0x33ff)
-
         print "Movement Test"
-        self.AxA.MoveWait(200)
-        self.AxA.MoveWait(-200)
-        self.AxB.MoveWait(200)
-        self.AxB.MoveWait(-200)
+        self.m_ra.MoveWait(200)
+        self.m_ra.MoveWait(-200)
+        self.m_dec.MoveWait(200)
+        self.m_dec.MoveWait(-200)
         
 
     def Slew(self, target):
@@ -259,14 +282,61 @@ class drive(object):
     def hardStop(self):
         self.driver_action_buffer.append({'stop': {'mode': 'hard'}})
         self.speedMode = 'off'
-        self.AxA.Run(0, 0)
-        self.AxB.Run(0, 0)
-        self.AxA.Float()
-        self.AxB.Float()
+        self.m_ra.Run(0, 0)
+        self.m_dec.Run(0, 0)
+        self.m_ra.Float()
+        self.m_dec.Float()
 
     def setMode(self, mode):
         self.driver_action_buffer.append({'tracking_mode': {'mode': mode}})
         self.speedMode = mode
+        return True
+
+    ### setTracking ###
+    def setTracking(self, mode = 'sidereal', units = 'steps', ra = 0, dec = 0, ra_multiplication = 1, dec_multiplication = 1):
+        '''
+            This function set tracking with multpile parameters...
+
+        input:
+            mode: Tracking modes: ['sidereal', 'solar', 'lunar', 'custom']
+            units: Units of ra, dec values (all per second): ['steps', 'seconds']
+            ra: speed of Ra axis in selected units
+            dec: speed of Dec axis in selected units
+            ra_multiplication: multiplicator of RA speed
+        '''
+
+        if mode in ['sidereal', 'solar', 'lunar', 'custom']:
+            if mode in self.preset_speed:
+                ra = self.preset_speed[mode]['ra']
+                dec = self.preset_speed[mode]['dec']
+            
+            if ra == 0 and ra_multiplication != 1:
+                ra = self.preset_speed['sidereal']['ra']
+            if dec == 0 and dec_multiplication != 1:
+                dec = self.preset_speed['sidereal']['ra']
+            if ra_multiplication !=1 or dec_multiplication != 1:
+                mode = 'custom'
+            
+            ra = ra*ra_multiplication
+            dec = dec*dec_multiplication
+            self.addAction('tracking', {'mode': mode, 'units': units, 'ra':ra, 'dec': dec})
+        else:
+            raise("Unknown tracking mode, try one from this list: 'sidereal', 'solar', 'lunar', 'custom'")
+        return True
+
+    ### addAction ###
+    def addAction(self, name, param = {}):
+        '''
+            This function add new operation to operation buffer
+        
+        input:
+            name: name of operation
+            param: operation param in dictionary type
+        output:
+        '''
+        #TODO: udelat kontrolu, jestli tato operace existuje
+        
+        self.driver_action_buffer.append({name:param})
         return True
 
     def tracking(self, state):
@@ -284,8 +354,8 @@ class drive(object):
 
     def setMaxSpeed(self, spd):
         print "maximal speed:", spd
-        self.AxA.MaxSpeed(int(spd))
-        self.AxB.MaxSpeed(int(spd))
+        self.m_ra.MaxSpeed(int(spd))
+        self.m_dec.MaxSpeed(int(spd))
 
     def getCoordinates(self, sky = True):
         try:
@@ -295,49 +365,78 @@ class drive(object):
             return None
 
     def getStepperStatus(self):
-        return (self.AxA.getStatus(), self.AxB.getStatus())
+        return (self.m_ra.getStatus(), self.m_dec.getStatus())
         #return (getStatus,{})
 
     def getStepperPosition(self):
-        axa = self.AxA.getPosition()
-        axb = self.AxB.getPosition()
-        return (axa, axb)
+        m_ra = self.m_ra.getPosition()
+        m_dec = self.m_dec.getPosition()
+        return (m_ra, m_dec)
 
     def getDefaultTrackingSpd(self):
         return self.trackingSpeed
 
+    def getTrackingModes(self):
+        '''
+            This function return dictionary with supported tracking modes
+
+            input:
+            output:
+                dict: dictionary with tracking modes
+        '''
+        return self.preset_speed
+
+    def getStepsPerRev(self):
+        return self.mount_steps
 
     def getAxisPosition(self):
-        axa = self.AxA.getPosition()
-        axb = self.AxB.getPosition()
+        pos_ra = self.m_ra.getPosition()
+        pos_dec = self.m_dec.getPosition()
 
 
         print "*******************************************"
-        print "raw", (axa, axb)
-        print "count1C ", ( Angle(90*u.deg)-Angle(axa/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d') , Angle(90, unit="deg")-(Angle(axb/self.mount_stepsperdeg[1], unit="deg").wrap_at('360d')) ),              Angle((90*u.deg)-Angle(axa/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')).to_string(unit=u.hour)
-        print "count1D ", ( Angle(90*u.deg)-Angle(axa/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')+(180*u.deg) , Angle(90, unit="deg")-(Angle(axb/self.mount_stepsperdeg[1], unit="deg").wrap_at('360d')) ),        Angle((90*u.deg)-Angle(axa/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')+(180*u.deg)).to_string(unit=u.hour)
+        print "raw", (pos_ra, pos_dec)
+        #print "count1C ", ( Angle(90*u.deg)-Angle(m_ra/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d') , Angle(90, unit="deg")-(Angle(pos_dec/self.mount_stepsperdeg[1], unit="deg").wrap_at('360d')) ),              Angle((90*u.deg)-Angle(m_ra/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')).to_string(unit=u.hour)
+        #print "count1D ", ( Angle(90*u.deg)-Angle(m_ra/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')+(180*u.deg) , Angle(90, unit="deg")-(Angle(pos_dec/self.mount_stepsperdeg[1], unit="deg").wrap_at('360d')) ),        Angle((90*u.deg)-Angle(m_ra/self.mount_stepsperdeg[0], unit="deg").wrap_at('360d')+(180*u.deg)).to_string(unit=u.hour)
 
         out_a = Angle(0*u.deg)
         out_b = Angle(0*u.deg)
 
-
-        if axa < (2**22)/4:
-            x_ha = axa/self.mount_stepsperdeg[0]
-            if axb < (2**22)/4:
+        '''
+        if m_ra < (2**22)/4:
+            x_ha = m_ra/self.mount_stepsperdeg[0]
+            if pos_dec < (2**22)/4:
                 print "SEKTOR I (0-90)"
                 out_a = Angle(-1*(x_ha+90)*u.deg).wrap_at('360d')
             else:
                 print "SEKTOR III (180-270)"
                 out_a = Angle(-1*(x_ha-90)*u.deg).wrap_at('360d')
         else:
-            x_ha = (2**22-axa)/self.mount_stepsperdeg[0]
-            if axb < (2**22)/4:
+            x_ha = (2**22-m_ra)/self.mount_stepsperdeg[0]
+            if pos_dec < (2**22)/4:
                 print "SEKTOR II (90-180)"
                 out_a = Angle(x_ha*u.deg+270*u.deg)
             else:
                 print "SEKTOR IV (270-360)"
                 out_a = Angle(x_ha*u.deg)
+        '''
 
+        if pos_ra < (2**22)/2:                                          ## kdyz je RA natoceno doprava
+            x_ha = pos_ra/self.mount_stepsperdeg[0]
+            if pos_dec < (2**22)/2:
+                print "SEKTOR I (0-90)"
+                out_a = Angle(-1*(x_ha+90)*u.deg).wrap_at('360d')
+            else:
+                print "SEKTOR III (180-270)"
+                out_a = Angle(-1*(x_ha-90)*u.deg).wrap_at('360d')
+        else:
+            x_ha = (2**22-pos_ra)/self.mount_stepsperdeg[0]
+            if pos_dec < (2**22)/2:
+                print "SEKTOR II (90-180)"
+                out_a = Angle(x_ha*u.deg+270*u.deg)
+            else:
+                print "SEKTOR IV (270-360)"
+                out_a = Angle(x_ha*u.deg)
 
 
         LST = Time(str(Time.now()), scale='utc', location=self.observatory).sidereal_time('mean')
@@ -358,8 +457,11 @@ class drive(object):
         print self.mountCoord
         return self.mountCoord
 
-    def realAxisCoord(self, AxisPos):
-        ra, dec = AxisPos
+    def realAxisCoord(self, AxisPos = None):
+        if AxisPos:
+            ra, dec = AxisPos
+        else:
+            ra, dec = self.m_ra.getPosition(), self.m_dec.getPosition()
         ha_c = ra/self.mount_stepsperdeg[0]
         dec_c= dec/self.mount_stepsperdeg[1]
 
@@ -373,7 +475,7 @@ class drive(object):
         ha = 0
         while getattr(self, "run", True):
             time.sleep(0.25)
-            print("ActBuff:", len(self.driver_action_buffer), self.driver_action_now,  self.driver_action_buffer[self.driver_action_now-1])
+            #print("ActBuff:", len(self.driver_action_buffer), self.driver_action_now,  self.driver_action_buffer[self.driver_action_now-1])
             driver_action, driver_action_params = self.driver_action_buffer[self.driver_action_now-1].items()[0]
 
             if self.driver_action_status in [0,1] and len(self.driver_action_buffer) > self.driver_action_now:
@@ -384,22 +486,19 @@ class drive(object):
                 print("Mam novou akci - prechazim na dalsi: ", self.driver_action_now, self.driver_action_buffer[self.driver_action_now-1])
                 self.driver_action_status = 999
 
-            AxA_mountDir, AxB_mountDir = self.mount_direction
-
-            self.realAxisPos = (self.AxA.getPosition(),self.AxB.getPosition())
-            axis_ha, axis_ra = self.realAxisCoord(self.realAxisPos)
+            m_ra_mountDir, m_dec_mountDir = self.mount_direction
+            #axis_ha, axis_ra = self.realAxisCoord()
             
 
             if driver_action == 'home' and self.driver_action_status != 0:
-                pass
-                self.driver_action_status = 0
-                print("park", self.driver_action_status)
-                #self.AxA.Float()
-                #self.AxB.Float()
-                #self.AxA.GoHome(False)
-                #self.AxB.GoHome(False)
-                #while self.AxA.IsBusy() | self.AxB.IsBusy():
+                # TODO: zkontrolovat cca polohu dle accel
+                # TODO: kalibrace podle HALL
+                print("Parking started...")
+                self.m_ra.GoHome(False)
+                self.m_dec.GoHome(False)
+                #while self.m_ra.IsBusy() | self.m_dec.IsBusy():
                 #    time.sleep(0.35)
+                self.driver_action_status = 0
             
             elif driver_action == 'slew':
                 self.driver_action_status = 3 # pracuji - neprerusovat
@@ -419,12 +518,12 @@ class drive(object):
                 print "Pozice montaze ra,dec:", ha *self.mount_stepsperdeg[0], dec *self.mount_stepsperdeg[1]
                 print ""
 
-                self.AxA.GoTo(int(ha *self.mount_stepsperdeg[0]))
-                self.AxB.GoTo(int(dec*self.mount_stepsperdeg[1]))
+                self.m_ra.GoTo(int(ha *self.mount_stepsperdeg[0]))
+                self.m_dec.GoTo(int(dec*self.mount_stepsperdeg[1]))
 
-                while self.AxA.IsBusy() or self.AxB.IsBusy():
-                    reg_a = self.AxA.ReadStatusReg()
-                    reg_b = self.AxB.ReadStatusReg()
+                while self.m_ra.IsBusy() or self.m_dec.IsBusy():
+                    reg_a = self.m_ra.ReadStatusReg()
+                    reg_b = self.m_dec.ReadStatusReg()
                     print reg_a, reg_b
                     self.getAxisPosition()
                     time.sleep(0.5)
@@ -433,165 +532,44 @@ class drive(object):
                 print "Slew dokonceno"
                 self.mount_position = target
 
-                #self.AxA.Float()
-                #self.AxB.Float()
-                #time.sleep(0.5)
-                #self.speedMode = 'sidereal'
-
                 self.driver_action_status = 1
                 self.driver_action_buffer.append({'tracking': {'mode': 'sidereal'} })
 
             elif driver_action == 'tracking' and self.driver_action_status >= 1:
-                print "tracking", driver_action_params['mode'], driver_action, self.driver_action_status >= 1
+                print("tracking", driver_action_params['mode'], driver_action, self.driver_action_status >= 1)
                 tracking_mode = driver_action_params['mode']
                 self.driver_action_status = 1
+                
                 if tracking_mode == False:
-                    lastA = 0
-                    lastB = 0
+                    self.driver_action_status = 0
 
-                elif tracking_mode == 'sidereal':
-                    newA = 50
-                    newB = 0
-                    #if lastA != newA or lastB != newB:
-                    #self.AxA.Run(int(AxA_mountDir), 1.2)
-                    #self.AxB.Float()
-                    lastA = 50
-                    lastB = 0
+                elif tracking_mode == 'stop':
+                    self.m_ra.Float()
+                    self.m_dec.Float()
+
+                elif tracking_mode == 'custom':
+                    if driver_action_params.get('units', 'steps') == 'steps':
+                        self.m_ra.Run(int(m_ra_mountDir), driver_action_params.get('ra', 0))
+                        self.m_dec.Run(int(m_dec_mountDir), driver_action_params.get('dec', 0))
+
+                elif self.preset_speed.get(tracking_mode, None):
+                    print("Start tracking by preset....", tracking_mode)
+                    ra = self.preset_speed[tracking_mode]['ra']
+                    dec = self.preset_speed[tracking_mode]['dec']
+                    print('Rychlosti:', ra, dec)
+                    self.m_ra.Run( int(m_ra_mountDir), ra)
+                    self.m_dec.Run(int(m_dec_mountDir), dec)
                     
-
-                    if self.mount_position is not None:
-                        print self.driver_action_status
-
-                        time.sleep(1)
-                        '''
-                        ha, dec = self.GetHaDecCoordinates(target)
-                        self.error = -((int(ha*self.mount_stepsperdeg[0])+2**21)-(self.AxA.getPosition()-2**21))*10
-                        print "pozadovana pozice", ha, "HA:", int(ha*self.mount_stepsperdeg[0])+2**21, "realna pozice", self.AxA.getPosition()-2**21, "rozdil:", self.error
-
-                        
-                        self.ra_P_val = self.ra_kp * self.error
-                        self.ra_Derivator = self.error
-
-                        self.ra_Integrator = self.ra_Integrator + self.error
-
-                        if self.ra_Integrator > self.ra_Integrator_max:
-                            self.ra_Integrator = self.ra_Integrator_max
-                        elif self.ra_Integrator < self.ra_Integrator_min:
-                            self.ra_Integrator = self.ra_Integrator_min
-
-                        self.ra_I_val = self.ra_Integrator * self.ra_ip
-
-                        self.ra_D_val = self.ra_kp * (self.error - self.ra_Derivator)
-                        
-                        ra_PID = self.ra_P_val + self.ra_I_val + self.ra_D_val
-
-                        ra_PID = ra_PID
-                        print ra_PID, self.ra_P_val, self.ra_I_val 
-
-                        if ra_PID > 100:
-                            ra_PID = 100
-                            dire = AxA_mountDir
-                        elif ra_PID >= 0:
-                            dire = AxA_mountDir
-                        elif ra_PID < -100:
-                            ra_PID = -100
-                            dire = not AxA_mountDir
-                        elif ra_PID < 0:
-                            dire = not AxA_mountDir
-
-                        ra_PID = 60
-                        print AxA_mountDir, abs(ra_PID)
-                        '''
-                        print int(AxA_mountDir), self.trackingSpeed
-                        #self.AxA.Run(AxA_mountDir, 0b1000000000000)
-                        self.AxA.Run(AxA_mountDir, self.trackingSpeed[0])
-                        self.AxB.Run(AxA_mountDir, self.trackingSpeed[1])
-                        self.driver_action_status = 0
-
                 elif tracking_mode == 'orbit':
-
                     if self.mount_position is not None and True:
+                        time.sleep(0.1)
+                
+                self.driver_action_status = 0
 
-                        time.sleep(1)
-
-                        '''
-                        ha, dec = self.GetHaDecCoordinates(self.GetCoordByTLE('ISS'))
-                        self.ra_error = -((int(ha*self.mount_stepsperdeg[0])+2**21)-(self.AxA.getPosition()-2**21))*10
-                        self.dec_error = -((int(ha*self.mount_stepsperdeg[1])+2**21)-(self.AxB.getPosition()-2**21))*10
-
-                        print "pozadovana pozice", ha, "HA:", int(ha*self.mount_stepsperdeg[0])+2**21, "realna pozice", self.AxA.getPosition()-2**21, "rozdil:", self.ra_error
-
-                        self.ra_P_val = self.ra_kp * self.ra_error
-                        self.ra_Derivator = self.ra_error
-
-                        self.ra_Integrator = self.ra_Integrator + self.ra_error
-
-                        if self.ra_Integrator > self.ra_Integrator_max:
-                            self.ra_Integrator = self.ra_Integrator_max
-                        elif self.ra_Integrator < self.ra_Integrator_min:
-                            self.ra_Integrator = self.ra_Integrator_min
-
-                        self.ra_I_val = self.ra_Integrator * self.ra_ip
-
-                        self.ra_D_val = self.ra_kp * (self.ra_error - self.ra_Derivator)
-                        
-                        ra_PID = self.ra_P_val + self.ra_I_val + self.ra_D_val
-
-                        ra_PID = ra_PID
-                        print ra_PID, self.ra_P_val, self.ra_I_val 
-
-                        if ra_PID > 1000:
-                            ra_PID = 1000
-                            dire = AxA_mountDir
-                        elif ra_PID >= 0:
-                            dire = AxA_mountDir
-                        elif ra_PID < -1000:
-                            ra_PID = -1000
-                            dire = not AxA_mountDir
-                        elif ra_PID < 0:
-                            dire = not AxA_mountDir
-                        print AxA_mountDir, abs(ra_PID)
-                        self.AxA.Run(int(dire), abs(ra_PID)/10)
-
-
-
-
-                        self.dec_P_val = self.dec_kp * self.dec_error
-                        self.dec_Derivator = self.dec_error
-
-                        self.dec_Integrator = self.dec_Integrator + self.dec_error
-
-                        if self.dec_Integrator > self.dec_Integrator_max:
-                            self.dec_Integrator = self.dec_Integrator_max
-                        elif self.dec_Integrator < self.dec_Integrator_min:
-                            self.dec_Integrator = self.dec_Integrator_min
-
-                        self.dec_I_val = self.dec_Integrator * self.dec_ip
-
-                        self.dec_D_val = self.dec_kp * (self.dec_error - self.dec_Derivator)
-                        
-                        dec_PID = self.dec_P_val + self.dec_I_val + self.dec_D_val
-
-                        dec_PID = dec_PID
-                        print dec_PID, self.dec_P_val, self.dec_I_val 
-
-                        if dec_PID > 90000:
-                            dec_PID = 90000
-                            dire = AxA_mountDir
-                        elif dec_PID >= 0:
-                            dire = AxA_mountDir
-                        elif dec_PID < -90000:
-                            dec_PID = -90000
-                            dire = not AxA_mountDir
-                        elif dec_PID < 0:
-                            dire = not AxA_mountDir
-                        print AxB_mountDir, abs(dec_PID)
-                        self.AxB.Run(int(dire), abs(dec_PID)/10)
-                        '''
 
             if self.status_callback and time.time() > last_status_callback + 3:
                 try:
-                    self.status_callback(self.mount_target, self.mount_position, self.AxA.getStatus(), self.AxB.getStatus())
+                    self.status_callback(self.mount_target, self.mount_position, self.m_ra.getStatus(), self.m_dec.getStatus())
                     last_status_callback = time.time()
                 except Exception as e:
                     print(e)
@@ -626,3 +604,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
