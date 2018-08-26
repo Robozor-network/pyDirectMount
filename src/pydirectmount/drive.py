@@ -36,7 +36,7 @@ class drive(object):
     status_callback = None
 
     def __init__(self, profile = False, mode = "eq", steps_per_revA = 0, reverseA = False,
-                steps_per_revB = 0, reverseB = False, speedMode = 'off', connectMethod = 'pymlab',
+                steps_per_revB = 0, reverseB = False, speedMode = 'off', connectMethod = 'pymlab', connectInstance = None,
                 connect = True, obs_lat = 48.986976, obs_lon = 14.467532, obs_alt = 300, port = '/dev/ttyUSB0'):
 
         self.driver_action_buffer = [{'home':True}]
@@ -52,6 +52,7 @@ class drive(object):
         self.mount_direction = (reverseA, reverseB)
         self.speedMode = speedMode # 'sidereal' - rychlost pohybu hvezd, 'off' - vypnuty hodinovy stroj, 'custom' - vlastni rychlost, 'solar', 'lunal', ...
         self.connectMethod = connectMethod
+        self.connectInstance = connectInstance
         self.mount_position = SkyCoord(0, 0, frame = "icrs", unit="deg")
         self.home_position = SkyCoord(alt = 0, az = 90, obstime = Time.now(), frame = 'altaz', unit="deg", location = self.observatory)
         self.mountCoord = self.mount_position
@@ -67,8 +68,10 @@ class drive(object):
         #TODO moznost nastavit profil a pak teprve upravit parametry ze zadain
         if profile == 'HEQ5':
             self.mount_mode = 'eq'
-            self.mount_steps = (2256680, 2256680) # osa RA zhruba zmerena na 13 238 879 kroku. bez nastaveni microsteppingu (tzn. 1/128), 
-                                                  # 2250429 pri 1/16 microstep tzn. - cely registr je cca 1.9 otacky (mereno na RA)
+            # 141 000 kroku na 1 otoceni - ziskano z EQmod ovladace
+            #self.mount_steps = (2256000, 2256000) # osa RA zhruba zmerena na 18 048 000 kroku. bez nastaveni microsteppingu (tzn. 1/128), 
+            #                                      # 2256000 pri 1/16 microstep tzn. - cely registr je cca 1.9 otacky (mereno na RA)
+            self.mount_steps = (18048000, 18048000) # osa RA zhruba zmerena na 18 048 000 kroku. bez nastaveni microsteppingu (tzn. 1/128), 
             self.mount_direction = (False, False) # smer otaceni os
 
         self.mount_stepsperdeg = (self.mount_steps[0]/360.0, self.mount_steps[1]/360.0)
@@ -173,103 +176,59 @@ class drive(object):
 
             self.pymlab = rospy.ServiceProxy('pymlab_drive', PymlabDrive)
             rospy.set_param('/arom/node'+rospy.get_name()+"/pymlab", True)
-            
-            self.m_ra = axis.axis(SPI = self.pymlab, SPI_CS = 0b0001, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
-            self.m_ra.Setup(
-                MAX_SPEED = 900,
-                KVAL_ACC=0.5,
-                KVAL_RUN=0.5,
-                KVAL_DEC=0.5,
-                ACC = 100,
-                DEC = 1000,
-                FS_SPD=3000,
-                STEP_MODE=axis.axis.STEP_MODE_1_16)
-            self.m_dec = axis.axis(SPI = self.pymlab, SPI_CS = 0b0010, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
-            self.m_dec.Setup(
-                MAX_SPEED = 900,
-                KVAL_ACC=0.5,
-                KVAL_RUN=0.5,
-                KVAL_DEC=0.5,
-                ACC = 100,
-                DEC = 1000,
-                FS_SPD=3000,
-                STEP_MODE=axis.axis.STEP_MODE_1_16)
-            time.sleep(.25)
 
-        print "Movement Test"
-        self.m_ra.MoveWait(200)
-        self.m_ra.MoveWait(-200)
-        self.m_dec.MoveWait(200)
-        self.m_dec.MoveWait(-200)
-        
+            self.m_ra = axis.axis(SPI = self.pymlab, SPI_CS = 0b0001, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
+            self.m_dec = axis.axis(SPI = self.pymlab, SPI_CS = 0b0010, Direction = True, StepsPerUnit = 1, protocol = 'arom', arom_spi_name = 'telescope')
+
+
+        elif self.connectMethod == 'pymlab':
+            print("CONNECT, pymlab")
+
+            self.m_ra = axis.axis(SPI = self.connectInstance, SPI_CS = 0b0001, Direction = True, StepsPerUnit = 1, protocol = 'i2c')
+            self.m_dec = axis.axis(SPI = self.connectInstance, SPI_CS = 0b0010, Direction = True, StepsPerUnit = 1, protocol = 'i2c')
+            
+
+        self.m_ra.Setup(
+            MAX_SPEED = 700,
+            KVAL_ACC=0.3,
+            KVAL_RUN=0.3,
+            KVAL_DEC=0.3,
+            ACC = 1000,
+            DEC = 1000,
+            FS_SPD=3000,
+            STEP_MODE=axis.axis.STEP_MODE_1_128)
+        self.m_dec.Setup(
+            MAX_SPEED = 700,
+            KVAL_ACC=0.3,
+            KVAL_RUN=0.3,
+            KVAL_DEC=0.3,
+            ACC = 1000,
+            DEC = 1000,
+            FS_SPD=3000,
+            STEP_MODE=axis.axis.STEP_MODE_1_128)
+        time.sleep(.25)
+
+        print("Movement Test")
+        self.m_ra.Move(1000)
+        self.m_dec.MoveWait(1000)
+        time.sleep(0.5)
+        self.m_ra.Move(-1000)
+        self.m_dec.MoveWait(-1000)
+        self.m_ra.Wait()
+        print("Movement test DONE")
+
+        p1 = self.m_ra.virtual_position()
+        self.m_ra.MoveWait(-100)
+        p2 = self.m_ra.virtual_position()
+        self.m_ra.MoveWait(100)
+        p3 = self.m_ra.virtual_position()
+        print("POS", p1, p2, p3, p1-p2)
 
     def Slew(self, target):
         self.driver_action_buffer.append({'slew': {'target': target} })
         print "Slew to", target
         self.mount_target = target
         self.mount_slew = True
-
-    #TODO: support for TLE tracking
-    '''
-    def GetCoordByTLE(self, name):
-
-        degrees_per_radian = 180.0 / math.pi
-        home = ephem.Observer()
-        home.lon = self.observatory.longitude.degree
-        home.lat = self.observatory.latitude.degree
-        home.elevation = 300 # meters 
-
-        # Always get the latest ISS TLE data from:
-        # http://spaceflight.nasa.gov/realdata/sightings/SSapplications/Post/JavaSSOP/orbit/ISS/SVPOST.html
-        iss = ephem.readtle('ISS',
-            '1 39433U 13066T   16320.81582129 +.00000905 +00000-0 +96151-4 0  9996',
-            '2 39433 097.6817 023.9463 0030935 203.5994 156.3807 14.91124701161032'
-        )
-
-        home.date = datetime.datetime.utcnow()
-        iss.compute(home)
-        icrs = SkyCoord(alt = iss.alt*degrees_per_radian, az = iss.az*degrees_per_radian, obstime = Time.now(), frame = 'altaz', unit="deg", location = self.observatory).icrs
-
-        #self.driver_action_buffer.append({'slewTLE': {'object': name, 'SkyCoord': altaz} })
-        return icrs
-
-    def StartTrackingTLE(self, name):
-        print "TLE tracking"
-
-        #self.GetCoordByTLE(name)
-        self.mount_target = self.GetCoordByTLE('iss')
-
-        home = ephem.Observer()
-        home.lon = self.observatory.longitude.degree
-        home.lat = self.observatory.latitude.degree
-        home.elevation = 300 # meters 
-
-        # Always get the latest ISS TLE data from:
-        # http://spaceflight.nasa.gov/realdata/sightings/SSapplications/Post/JavaSSOP/orbit/ISS/SVPOST.html
-        iss = ephem.readtle('ISS',
-            '1 39433U 13066T   16320.81582129 +.00000905 +00000-0 +96151-4 0  9996',
-            '2 39433 097.6817 023.9463 0030935 203.5994 156.3807 14.91124701161032'
-        )
-
-        home.date = datetime.datetime.utcnow()
-        iss.compute(home)
-
-        degrees_per_radian = 180.0 / math.pi
-        issNow = (iss.alt * degrees_per_radian, iss.az * degrees_per_radian)
-        print "ISS alt, az:", issNow
-        print "ISS rise, transit, set:", iss.rise_time, iss.transit_time, iss.set_time
-        print iss
-        print iss.range_velocity/1000, "km/s ", iss.range/1000, "km"
-
-        if issNow[0] < 10:
-            print "ISS je pod obzorem"
-        else:
-            print "ISS je nad obzorem"
-
-        self.speedMode = 'orbit'
-
-        self.driver_action_buffer.append({'tracking': {'mode': 'tle', 'object': name, 'position': issNow} })
-        '''
 
     def GoPark(self):
         self.park = True
@@ -293,7 +252,8 @@ class drive(object):
         return True
 
     ### setTracking ###
-    def setTracking(self, mode = 'sidereal', units = 'steps', ra = 0, dec = 0, ra_multiplication = 1, dec_multiplication = 1):
+    ## set_tracking
+    def set_tracking(self, mode = 'sidereal', units = 'steps', ra = 0, dec = 0, ra_multiplication = 1, dec_multiplication = 1):
         '''
             This function set tracking with multpile parameters...
 
@@ -389,9 +349,33 @@ class drive(object):
     def getStepsPerRev(self):
         return self.mount_steps
 
+    def get_motor_steps(self):
+        '''
+            This function obtain count of steps in HBSTEP driver
+        '''
+        ra = self.m_ra.getPosition()
+        dec = self.m_dec.getPosition()
+        return(ra, dec)
+
+    def get_motor_status(self, ra=True, dec=True):
+        if not ra:
+            ra = {}
+        else:
+            ra = self.m_ra.getStatus()
+        
+        if not dec:
+            dec = {}
+        else:
+            dec = self.m_dec.getStatus()
+        
+        return(ra, dec)
+
     def getAxisPosition(self):
-        pos_ra = self.m_ra.getPosition()
-        pos_dec = self.m_dec.getPosition()
+        #pos_ra = self.m_ra.getPosition()
+        #pos_dec = self.m_dec.getPosition()
+
+        pos_ra = self.m_ra.virtual_position()
+        pos_dec = self.m_dec.virtual_position()
 
 
         print "*******************************************"
@@ -401,25 +385,6 @@ class drive(object):
 
         out_a = Angle(0*u.deg)
         out_b = Angle(0*u.deg)
-
-        '''
-        if m_ra < (2**22)/4:
-            x_ha = m_ra/self.mount_stepsperdeg[0]
-            if pos_dec < (2**22)/4:
-                print "SEKTOR I (0-90)"
-                out_a = Angle(-1*(x_ha+90)*u.deg).wrap_at('360d')
-            else:
-                print "SEKTOR III (180-270)"
-                out_a = Angle(-1*(x_ha-90)*u.deg).wrap_at('360d')
-        else:
-            x_ha = (2**22-m_ra)/self.mount_stepsperdeg[0]
-            if pos_dec < (2**22)/4:
-                print "SEKTOR II (90-180)"
-                out_a = Angle(x_ha*u.deg+270*u.deg)
-            else:
-                print "SEKTOR IV (270-360)"
-                out_a = Angle(x_ha*u.deg)
-        '''
 
         if pos_ra < (2**22)/2:                                          ## kdyz je RA natoceno doprava
             x_ha = pos_ra/self.mount_stepsperdeg[0]
@@ -472,11 +437,11 @@ class drive(object):
 
     def mThread(self):
         last_status_callback = time.time()
+        m_ra_mountDir, m_dec_mountDir = self.mount_direction
         ha = 0
         while getattr(self, "run", True):
             time.sleep(0.25)
             #print("ActBuff:", len(self.driver_action_buffer), self.driver_action_now,  self.driver_action_buffer[self.driver_action_now-1])
-            driver_action, driver_action_params = self.driver_action_buffer[self.driver_action_now-1].items()[0]
 
             if self.driver_action_status in [0,1] and len(self.driver_action_buffer) > self.driver_action_now:
                 # kdyz je status akce je 0 nebo 1 (dokonceno nebo lze prerusit) a v bufferu je nejaka dalsi akce
@@ -486,9 +451,11 @@ class drive(object):
                 print("Mam novou akci - prechazim na dalsi: ", self.driver_action_now, self.driver_action_buffer[self.driver_action_now-1])
                 self.driver_action_status = 999
 
-            m_ra_mountDir, m_dec_mountDir = self.mount_direction
-            #axis_ha, axis_ra = self.realAxisCoord()
+            #if 'STOP1' in self.driver_action_buffer:
+                #TODO: umoznit preruseni 
             
+            driver_action, driver_action_params = self.driver_action_buffer[self.driver_action_now-1].items()[0]
+
 
             if driver_action == 'home' and self.driver_action_status != 0:
                 # TODO: zkontrolovat cca polohu dle accel
@@ -500,40 +467,44 @@ class drive(object):
                 #    time.sleep(0.35)
                 self.driver_action_status = 0
             
-            elif driver_action == 'slew':
-                self.driver_action_status = 3 # pracuji - neprerusovat
-                print ""
-                print ""
-                print "slew mode"
-                print "============"
-                print "pozadovane souradnice: ", self.mount_target.to_string('hmsdms')
-                print "pozadovane souradnice: ", self.mount_target.to_string('dms')
-                print "AzAlt                : ", self.mount_target.transform_to(AltAz(obstime = Time.now(), location=self.observatory)).to_string('dms')
+            elif driver_action == 'slew' and self.driver_action_status > 0:
+                if self.driver_action_status == 999:
+                    self.driver_action_status = 3 # pracuji - neprerusovat
+                    print ""
+                    print ""
+                    print "slew mode"
+                    print "============"
+                    print "pozadovane souradnice: ", self.mount_target.to_string('hmsdms')
+                    print "pozadovane souradnice: ", self.mount_target.to_string('dms')
+                    print "AzAlt                : ", self.mount_target.transform_to(AltAz(obstime = Time.now(), location=self.observatory)).to_string('dms')
 
-                target = self.mount_target
+                    target = self.mount_target
+                    ha, dec = self.GetHaDecCoordinates(target)
 
-                ha, dec = self.GetHaDecCoordinates(target)
+                    print "Ha [deg]  [h]        : ", ha, ha/15
+                    print "Pozad pozice montaze ra,dec:", ha*self.mount_stepsperdeg[0], dec*self.mount_stepsperdeg[1]
+                    print ""
 
-                print "Ha [deg]  [h]        : ", ha, ha/15
-                print "Pozice montaze ra,dec:", ha *self.mount_stepsperdeg[0], dec *self.mount_stepsperdeg[1]
-                print ""
+                    #self.m_ra.GoTo(int(ha *self.mount_stepsperdeg[0]))
+                    #self.m_dec.GoTo(int(dec*self.mount_stepsperdeg[1]))
+                    
+                    rs = self.m_ra.goto_virtual(int(ha*self.mount_stepsperdeg[0]))
+                    rd = self.m_dec.goto_virtual(int(dec*self.mount_stepsperdeg[1]))
+                    self.driver_action_status = 1
 
-                self.m_ra.GoTo(int(ha *self.mount_stepsperdeg[0]))
-                self.m_dec.GoTo(int(dec*self.mount_stepsperdeg[1]))
-
-                while self.m_ra.IsBusy() or self.m_dec.IsBusy():
-                    reg_a = self.m_ra.ReadStatusReg()
-                    reg_b = self.m_dec.ReadStatusReg()
-                    print reg_a, reg_b
-                    self.getAxisPosition()
+                elif self.driver_action_status == 1:
+                    if rs: rs = self.m_ra.goto_virtual(int(ha*self.mount_stepsperdeg[0]))
+                    if rd: rd = self.m_dec.goto_virtual(int(dec*self.mount_stepsperdeg[1]))
                     time.sleep(0.5)
 
+                    if rs==0 and rd==0:
+                        self.driver_action_buffer.append({'tracking': {'mode': 'sidereal'} })
+                        self.driver_action_status = 0
 
-                print "Slew dokonceno"
-                self.mount_position = target
+                if self.driver_action_status == 0:
+                    print "Slew dokonceno"
+                    self.mount_position = target
 
-                self.driver_action_status = 1
-                self.driver_action_buffer.append({'tracking': {'mode': 'sidereal'} })
 
             elif driver_action == 'tracking' and self.driver_action_status >= 1:
                 print("tracking", driver_action_params['mode'], driver_action, self.driver_action_status >= 1)
@@ -567,7 +538,7 @@ class drive(object):
                 self.driver_action_status = 0
 
 
-            if self.status_callback and time.time() > last_status_callback + 3:
+            if self.status_callback and time.time() > last_status_callback + 1:
                 try:
                     self.status_callback(self.mount_target, self.mount_position, self.m_ra.getStatus(), self.m_dec.getStatus())
                     last_status_callback = time.time()
